@@ -34,18 +34,19 @@
  author: Scott Niekum
 */
 
+#include <ar_track_alvar/ParamsConfig.h>
+#include <ar_track_alvar_msgs/AlvarMarker.h>
+#include <ar_track_alvar_msgs/AlvarMarkers.h>
+#include <cv_bridge/cv_bridge.h>
+#include <dynamic_reconfigure/server.h>
+#include <sensor_msgs/image_encodings.h>
 #include <std_msgs/Bool.h>
+#include <tf/transform_broadcaster.h>
+#include <tf/transform_listener.h>
+
 #include "ar_track_alvar/CvTestbed.h"
 #include "ar_track_alvar/MarkerDetector.h"
 #include "ar_track_alvar/Shared.h"
-#include <cv_bridge/cv_bridge.h>
-#include <ar_track_alvar_msgs/AlvarMarker.h>
-#include <ar_track_alvar_msgs/AlvarMarkers.h>
-#include <tf/transform_listener.h>
-#include <tf/transform_broadcaster.h>
-#include <sensor_msgs/image_encodings.h>
-#include <dynamic_reconfigure/server.h>
-#include <ar_track_alvar/ParamsConfig.h>
 
 using namespace alvar;
 using namespace std;
@@ -76,39 +77,26 @@ int marker_margin = 2;      // default marker margin
 
 void getCapCallback(const sensor_msgs::ImageConstPtr& image_msg);
 
-void getCapCallback(const sensor_msgs::ImageConstPtr& image_msg)
-{
+void getCapCallback(const sensor_msgs::ImageConstPtr& image_msg) {
   // If we've already gotten the cam info, then go ahead
-  if (cam->getCamInfo_)
-  {
-    try
-    {
+  if (cam->getCamInfo_) {
+    try {
       tf::StampedTransform CamToOutput;
-      try
-      {
-        tf_listener->waitForTransform(output_frame, image_msg->header.frame_id,
-                                      image_msg->header.stamp,
-                                      ros::Duration(1.0));
-        tf_listener->lookupTransform(output_frame, image_msg->header.frame_id,
-                                     image_msg->header.stamp, CamToOutput);
-      }
-      catch (tf::TransformException ex)
-      {
+      try {
+        tf_listener->waitForTransform(output_frame, image_msg->header.frame_id, image_msg->header.stamp, ros::Duration(1.0));
+        tf_listener->lookupTransform(output_frame, image_msg->header.frame_id, image_msg->header.stamp, CamToOutput);
+      } catch (tf::TransformException ex) {
         ROS_ERROR("%s", ex.what());
       }
 
       // Convert the image
-      cv_ptr_ =
-          cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::BGR8);
+      cv_ptr_ = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::BGR8);
 
       // Get the estimated pose of the main markers by using all the markers in
       // each bundle
-      marker_detector.Detect(cv_ptr_->image, cam, true, false,
-                             max_new_marker_error, max_track_error, CVSEQ,
-                             true);
+      marker_detector.Detect(cv_ptr_->image, cam, true, false, max_new_marker_error, max_track_error, CVSEQ, true);
       arPoseMarkers_.markers.clear();
-      for (size_t i = 0; i < marker_detector.markers->size(); i++)
-      {
+      for (size_t i = 0; i < marker_detector.markers->size(); i++) {
         // Get the pose relative to the camera
         int id = (*(marker_detector.markers))[i].GetId();
         Pose p = (*(marker_detector.markers))[i].pose;
@@ -116,12 +104,12 @@ void getCapCallback(const sensor_msgs::ImageConstPtr& image_msg)
         double py = p.translation[1] / 100.0;
         double pz = p.translation[2] / 100.0;
 
-        cv::Mat quat =cv::Mat(4, 1, CV_64F);
+        cv::Mat quat = cv::Mat(4, 1, CV_64F);
         p.GetQuaternion(quat);
-        double qx = quat.at<double>(1,0); //p.quaternion[1]; #leaving these for the record, this was a bug in the original repo
-        double qy = quat.at<double>(2,0); //p.quaternion[2];
-        double qz = quat.at<double>(3,0); //p.quaternion[3];
-        double qw = quat.at<double>(0,0); //p.quaternion[0];
+        double qx = quat.at<double>(1, 0);  // p.quaternion[1]; #leaving these for the record, this was a bug in the original repo
+        double qy = quat.at<double>(2, 0);  // p.quaternion[2];
+        double qz = quat.at<double>(3, 0);  // p.quaternion[3];
+        double qw = quat.at<double>(0, 0);  // p.quaternion[0];
 
         tf::Quaternion rotation(qx, qy, qz, qw);
         tf::Vector3 origin(px, py, pz);
@@ -130,26 +118,22 @@ void getCapCallback(const sensor_msgs::ImageConstPtr& image_msg)
         tf::Transform m(tf::Quaternion::getIdentity(), markerOrigin);
         tf::Transform markerPose = t * m;  // marker pose in the camera frame
 
-        tf::Vector3 z_axis_cam = tf::Transform(rotation, tf::Vector3(0, 0, 0)) *
-                                 tf::Vector3(0, 0, 1);
+        tf::Vector3 z_axis_cam = tf::Transform(rotation, tf::Vector3(0, 0, 0)) * tf::Vector3(0, 0, 1);
         //                ROS_INFO("%02i Z in cam frame: %f %f %f",id,
         //                z_axis_cam.x(), z_axis_cam.y(), z_axis_cam.z());
         /// as we can't see through markers, this one is false positive
         /// detection
-        if (z_axis_cam.z() > 0)
-        {
+        if (z_axis_cam.z() > 0) {
           continue;
         }
 
         // Publish the transform from the camera to the marker
-        std::string markerFrame = "ar_marker_";
+        std::string markerFrame = ros::this_node::getNamespace() + "/ar_marker_";
         std::stringstream out;
         out << id;
         std::string id_string = out.str();
         markerFrame += id_string;
-        tf::StampedTransform camToMarker(t, image_msg->header.stamp,
-                                         image_msg->header.frame_id,
-                                         markerFrame.c_str());
+        tf::StampedTransform camToMarker(t, image_msg->header.stamp, image_msg->header.frame_id, markerFrame.c_str());
         tf_broadcaster->sendTransform(camToMarker);
 
         // Create the rviz visualization messages
@@ -164,8 +148,7 @@ void getCapCallback(const sensor_msgs::ImageConstPtr& image_msg)
         rvizMarker_.ns = "basic_shapes";
         rvizMarker_.type = visualization_msgs::Marker::CUBE;
         rvizMarker_.action = visualization_msgs::Marker::ADD;
-        switch (id)
-        {
+        switch (id) {
           case 0:
             rvizMarker_.color.r = 0.0f;
             rvizMarker_.color.g = 0.0f;
@@ -221,20 +204,14 @@ void getCapCallback(const sensor_msgs::ImageConstPtr& image_msg)
       arPoseMarkers_.header.stamp = image_msg->header.stamp;
       arPoseMarkers_.header.frame_id = output_frame;
       arMarkerPub_.publish(arPoseMarkers_);
-    }
-    catch (const std::exception& e)
-    {
+    } catch (const std::exception& e) {
       ROS_ERROR("Error in ar_track_alvar callback: %s", e.what());
     }
   }
 }
 
-void configCallback(ar_track_alvar::ParamsConfig& config, uint32_t level)
-{
-  ROS_INFO("AR tracker reconfigured: %s %.2f %.2f %.2f %.2f",
-           config.enabled ? "ENABLED" : "DISABLED", config.max_frequency,
-           config.marker_size, config.max_new_marker_error,
-           config.max_track_error);
+void configCallback(ar_track_alvar::ParamsConfig& config, uint32_t level) {
+  ROS_INFO("AR tracker reconfigured: %s %.2f %.2f %.2f %.2f", config.enabled ? "ENABLED" : "DISABLED", config.max_frequency, config.marker_size, config.max_new_marker_error, config.max_track_error);
 
   enableSwitched = enabled != config.enabled;
 
@@ -245,24 +222,20 @@ void configCallback(ar_track_alvar::ParamsConfig& config, uint32_t level)
   max_track_error = config.max_track_error;
 }
 
-void enableCallback(const std_msgs::BoolConstPtr& msg)
-{
+void enableCallback(const std_msgs::BoolConstPtr& msg) {
   enableSwitched = enabled != msg->data;
   enabled = msg->data;
 }
 
-int main(int argc, char* argv[])
-{
+int main(int argc, char* argv[]) {
   ros::init(argc, argv, "marker_detect");
   ros::NodeHandle n, pn("~");
 
-  if (argc > 1)
-  {
+  if (argc > 1) {
     ROS_WARN("Command line arguments are deprecated. Consider using ROS "
              "parameters and remappings.");
 
-    if (argc < 7)
-    {
+    if (argc < 7) {
       std::cout << std::endl;
       cout << "Not enough arguments provided." << endl;
       cout << "Usage: ./individualMarkersNoKinect <marker size in cm> <max new "
@@ -281,8 +254,7 @@ int main(int argc, char* argv[])
     cam_info_topic = argv[5];
     output_frame = argv[6];
 
-    if (argc > 7)
-    {
+    if (argc > 7) {
       max_frequency = atof(argv[7]);
       pn.setParam("max_frequency", max_frequency);
     }
@@ -290,9 +262,7 @@ int main(int argc, char* argv[])
       marker_resolution = atoi(argv[8]);
     if (argc > 9)
       marker_margin = atoi(argv[9]);
-  }
-  else
-  {
+  } else {
     // Get params from ros param server.
     pn.param("marker_size", marker_size, 10.0);
     pn.param("max_new_marker_error", max_new_marker_error, 0.08);
@@ -301,8 +271,7 @@ int main(int argc, char* argv[])
     pn.setParam("max_frequency", max_frequency);  // in case it was not set.
     pn.param("marker_resolution", marker_resolution, 5);
     pn.param("marker_margin", marker_margin, 2);
-    if (!pn.getParam("output_frame", output_frame))
-    {
+    if (!pn.getParam("output_frame", output_frame)) {
       ROS_ERROR("Param 'output_frame' has to be set.");
       exit(EXIT_FAILURE);
     }
@@ -323,10 +292,8 @@ int main(int argc, char* argv[])
   cam = new Camera(n, cam_info_topic);
   tf_listener = new tf::TransformListener(n);
   tf_broadcaster = new tf::TransformBroadcaster();
-  arMarkerPub_ =
-      n.advertise<ar_track_alvar_msgs::AlvarMarkers>("ar_pose_marker", 0);
-  rvizMarkerPub_ =
-      n.advertise<visualization_msgs::Marker>("visualization_marker", 0);
+  arMarkerPub_ = n.advertise<ar_track_alvar_msgs::AlvarMarkers>("ar_pose_marker", 0);
+  rvizMarkerPub_ = n.advertise<visualization_msgs::Marker>("visualization_marker", 0);
 
   // Prepare dynamic reconfiguration
   dynamic_reconfigure::Server<ar_track_alvar::ParamsConfig> server;
@@ -350,27 +317,21 @@ int main(int argc, char* argv[])
   /// Subscriber for enable-topic so that a user can turn off the detection if
   /// it is not used without having to use the reconfigure where he has to know
   /// all parameters
-  ros::Subscriber enable_sub_ =
-      pn.subscribe("enable_detection", 1, &enableCallback);
+  ros::Subscriber enable_sub_ = pn.subscribe("enable_detection", 1, &enableCallback);
 
   enableSwitched = true;
-  while (ros::ok())
-  {
+  while (ros::ok()) {
     ros::spinOnce();
     rate.sleep();
 
-    if (std::abs((rate.expectedCycleTime() - ros::Duration(1.0 / max_frequency))
-                     .toSec()) > 0.001)
-    {
+    if (std::abs((rate.expectedCycleTime() - ros::Duration(1.0 / max_frequency)).toSec()) > 0.001) {
       // Change rate dynamically; if must be above 0, as 0 will provoke a
       // segfault on next spinOnce
-      ROS_DEBUG("Changing frequency from %.2f to %.2f",
-                1.0 / rate.expectedCycleTime().toSec(), max_frequency);
+      ROS_DEBUG("Changing frequency from %.2f to %.2f", 1.0 / rate.expectedCycleTime().toSec(), max_frequency);
       rate = ros::Rate(max_frequency);
     }
 
-    if (enableSwitched)
-    {
+    if (enableSwitched) {
       // Enable/disable switch: subscribe/unsubscribe to make use of pointcloud
       // processing nodelet lazy publishing policy; in CPU-scarce computer as
       // TurtleBot's laptop this is a huge saving
